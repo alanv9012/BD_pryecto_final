@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 
 # Data paths
-# Taxi dataset can be in the final folder or parent directory
+# Taxi dataset can be in the current directory or parent directory
 TAXI_DATA_DIR = PROJECT_ROOT / "Taxi Dataset"
 if not TAXI_DATA_DIR.exists():
     TAXI_DATA_DIR = PROJECT_ROOT.parent / "Taxi Dataset"
@@ -21,7 +21,7 @@ ZONES_DATA_PATH = PROJECT_ROOT / "data" / "zones.csv"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # MongoDB configuration (to be set by user)
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://a271455_db_user:I3Sxtk54C3J5moXw@bigdatacluster.zagwkmh.mongodb.net/?appName=BigDataCluster")
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://username:password@cluster.mongodb.net/")
 MONGODB_DATABASE = "taxi_analysis"
 MONGODB_COLLECTIONS = {
     "trips_by_hour": "trips_by_hour",

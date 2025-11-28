@@ -23,63 +23,6 @@ def create_spark_session(config: dict = None) -> SparkSession:
     Returns:
         Configured SparkSession
     """
-    import os
-    
-    # Fix for Java 17+ compatibility issues
-    # Set Java options to allow restricted operations
-    java_opts = os.environ.get('JAVA_OPTS', '')
-    
-    # Add necessary Java options for Java 17+ compatibility
-    java_opts_parts = []
-    if java_opts:
-        java_opts_parts.append(java_opts)
-    
-    # Add options to fix Java 17+ security restrictions
-    # These are essential for Java 17+ compatibility
-    java_opts_parts.extend([
-        '--add-opens=java.base/java.lang=ALL-UNNAMED',
-        '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
-        '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
-        '--add-opens=java.base/java.io=ALL-UNNAMED',
-        '--add-opens=java.base/java.net=ALL-UNNAMED',
-        '--add-opens=java.base/java.nio=ALL-UNNAMED',
-        '--add-opens=java.base/java.util=ALL-UNNAMED',
-        '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
-        '--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED',
-        '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
-        '--add-opens=java.base/sun.nio.cs=ALL-UNNAMED',
-        '--add-opens=java.base/sun.security.action=ALL-UNNAMED',
-        '--add-opens=java.base/sun.util.calendar=ALL-UNNAMED',
-        '--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED',
-        '--add-opens=java.base/javax.security.auth=ALL-UNNAMED',
-        '--enable-native-access=ALL-UNNAMED',
-        '-Dio.netty.tryReflectionSetAccessible=true',
-        # Critical: Disable Hadoop security to avoid Subject.getSubject() call
-        '-Dhadoop.security.authentication=simple',
-        '-Dhadoop.security.authorization=false',
-        # Set user name directly to avoid Subject lookup
-        f'-Duser.name={os.environ.get("USERNAME", os.environ.get("USER", "spark"))}'
-    ])
-    
-    # Set the JAVA_OPTS environment variable
-    os.environ['JAVA_OPTS'] = ' '.join(java_opts_parts)
-    
-    # Also set _JAVA_OPTIONS (alternative way)
-    os.environ['_JAVA_OPTIONS'] = ' '.join(java_opts_parts)
-    
-    # Set Hadoop user name to bypass Subject.getSubject() call
-    # This is critical for Java 17+ compatibility
-    try:
-        import getpass
-        username = getpass.getuser()
-    except:
-        username = os.environ.get('USERNAME', os.environ.get('USER', 'spark'))
-    
-    # Set environment variables to bypass user lookup
-    os.environ['HADOOP_USER_NAME'] = username
-    os.environ['USER'] = username
-    os.environ['USERNAME'] = username
-    
     if config is None:
         from src.config import SPARK_CONFIG
         config = SPARK_CONFIG
@@ -88,22 +31,6 @@ def create_spark_session(config: dict = None) -> SparkSession:
     
     for key, value in config.items():
         builder = builder.config(key, value)
-    
-    # Add Spark config to handle Java 17+ issues
-    java_options_str = ' '.join(java_opts_parts)
-    builder = builder.config("spark.driver.extraJavaOptions", java_options_str)
-    builder = builder.config("spark.executor.extraJavaOptions", java_options_str)
-    
-    # Disable Hadoop security to avoid Subject.getSubject() issues
-    builder = builder.config("spark.hadoop.hadoop.security.authentication", "simple")
-    builder = builder.config("spark.hadoop.hadoop.security.authorization", "false")
-    
-    # Set user name in Spark config to avoid lookup
-    builder = builder.config("spark.app.user", username)
-    builder = builder.config("spark.hadoop.hadoop.user.name", username)
-    
-    # Additional config to bypass user group information lookup
-    builder = builder.config("spark.hadoop.fs.defaultFS", "file:///")
     
     spark = builder.getOrCreate()
     logger.info("Spark session created successfully")
@@ -142,10 +69,11 @@ def load_taxi_data(spark: SparkSession, data_dir: str) -> DataFrame:
     
     # Convert paths to strings and handle spaces properly
     # Use absolute paths to avoid issues with spaces
-    file_paths = [str(f.absolute()) for f in parquet_files]
+    parquet_paths = [str(f.absolute()) for f in parquet_files]
     
-    # Load all parquet files
-    df = spark.read.parquet(*file_paths)
+    # Load all parquet files by passing list of paths
+    # This works with paths containing spaces, unlike glob pattern
+    df = spark.read.parquet(*parquet_paths)
     
     logger.info(f"Loaded {df.count()} total records")
     return df
@@ -173,9 +101,8 @@ def clean_taxi_data(df: DataFrame) -> DataFrame:
     available_columns = df.columns
     
     # Common variations of column names
-    # Look for pickup datetime columns (can be 'pickup_datetime', 'tpep_pickup_datetime', etc.)
-    pickup_time_cols = [c for c in available_columns if 'pickup' in c.lower() and ('time' in c.lower() or 'datetime' in c.lower())]
-    dropoff_time_cols = [c for c in available_columns if 'dropoff' in c.lower() and ('time' in c.lower() or 'datetime' in c.lower())]
+    pickup_time_cols = [c for c in available_columns if 'pickup' in c.lower() and 'time' in c.lower()]
+    dropoff_time_cols = [c for c in available_columns if 'dropoff' in c.lower() and 'time' in c.lower()]
     distance_cols = [c for c in available_columns if 'distance' in c.lower()]
     fare_cols = [c for c in available_columns if 'fare' in c.lower() and 'amount' in c.lower()]
     
@@ -188,13 +115,10 @@ def clean_taxi_data(df: DataFrame) -> DataFrame:
     if fare_cols:
         key_fields.append(fare_cols[0])
     
-    # Remove nulls in key fields
-    # Get schema to check column types
-    schema = df.schema
-    column_types = {field.name: field.dataType for field in schema.fields}
+    # Get column types to check which ones are numeric
+    column_types = {field.name: field.dataType for field in df.schema.fields}
     
-    logger.info(f"Key fields for cleaning: {key_fields}")
-    
+    # Remove nulls and NaN values in key fields
     for field in key_fields:
         before_count = df.count()
         df = df.filter(col(field).isNotNull())
@@ -346,17 +270,11 @@ def add_derived_columns(df: DataFrame) -> DataFrame:
     
     df = df.withColumn("day_name", day_name_expr)
     
-    # Filter out invalid trip durations (only if trip_duration_min was successfully calculated)
-    # Don't filter out NULL durations - they might be valid records with missing timestamps
-    if 'trip_duration_min' in df.columns:
-        before_count = df.count()
-        df = df.filter(
-            (col("trip_duration_min").isNull()) |
-            ((col("trip_duration_min") >= MIN_TRIP_DURATION_MIN) &
-             (col("trip_duration_min") <= MAX_TRIP_DURATION_MIN))
-        )
-        after_count = df.count()
-        logger.info(f"After filtering invalid trip durations: {before_count} -> {after_count} records")
+    # Filter out invalid trip durations
+    df = df.filter(
+        (col("trip_duration_min") >= MIN_TRIP_DURATION_MIN) &
+        (col("trip_duration_min") <= MAX_TRIP_DURATION_MIN)
+    )
     
     return df
 

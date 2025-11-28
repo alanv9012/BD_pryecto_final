@@ -211,14 +211,14 @@ def analyze_revenue_payment(df: DataFrame) -> DataFrame:
     # Based on your data: 0 appears frequently (likely "Unknown" or "Not Specified")
     df_with_payment_name = df.withColumn(
         "payment_type_name",
-        when(col("payment_type").isNull(), "Unknown/Not Specified")
-        .when(col("payment_type") == 0, "Unknown/Not Specified")
-        .when(col("payment_type") == 1, "Credit Card")
-        .when(col("payment_type") == 2, "Cash")
-        .when(col("payment_type") == 3, "No Charge")
-        .when(col("payment_type") == 4, "Dispute")
-        .when(col("payment_type") == 5, "Unknown")
-        .when(col("payment_type") == 6, "Voided Trip")
+        when(col("payment_type").isNull(), lit("Unknown/Not Specified"))
+        .when(col("payment_type") == 0, lit("Unknown/Not Specified"))
+        .when(col("payment_type") == 1, lit("Credit Card"))
+        .when(col("payment_type") == 2, lit("Cash"))
+        .when(col("payment_type") == 3, lit("No Charge"))
+        .when(col("payment_type") == 4, lit("Dispute"))
+        .when(col("payment_type") == 5, lit("Unknown"))
+        .when(col("payment_type") == 6, lit("Voided Trip"))
         .otherwise(concat(lit("Other ("), col("payment_type").cast("string"), lit(")")))
     )
     
